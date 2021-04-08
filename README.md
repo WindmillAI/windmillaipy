@@ -1,1 +1,2 @@
-# windmillaipy
+# windmillaipy-internal
+WindMillAI Client
