@@ -1,1 +1,1 @@
-from windmillaipy.client import WindmillClient, WorkUnit
+from windmillaipy.client import WindmillClient, WindmillClientError, WorkUnit

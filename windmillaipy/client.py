@@ -6,7 +6,7 @@ import os
 import requests
 import tarfile
 
-from typing import List
+from typing import List, Union
 
 
 # Hardcode the endpoint base address. Can be overwritten when creating a new
@@ -36,27 +36,54 @@ class WindmillClient(object):
     self.endpoint = endpoint
 
   def create_experiment(
-      self, experiment_name: str, tags: List[str]=None) -> WorkUnit:
+      self, experiment_name: str, tags: List[str] = [],
+      parameters: List[Dict] = None) -> Union[WorkUnit, List[WorkUnit]]:
     'Creates a new experiment with a single work unit and returns it.'
 
     request = {
       'api_key': self.api_key,
       'name': experiment_name,
-      'tags': tags,
     }
+
+    if tags:
+      request.update({'tags': tags})
+
+    if parameters:
+      request.update({'parameters': parameters})
+
     url = '{}/api/v0/create_experiment'.format(self.endpoint)
     response = requests.post(url, json=request)
     _raise_if_error(response)
 
     response = response.json()
-    return WorkUnit(
-        response['xid'], response['wid'], self.api_key, self.endpoint)
+    if len(response['work_units']) == 1:
+      wu = response['work_units'][0]
+      return WorkUnit(
+          wu['xid'], wu['wid'], self.api_key, self.endpoint)
 
-  def get_work_unit(self, xid: str, wid: int) -> WorkUnit:
+    return [WorkUnit(wu['xid'], wu['wid'], self.api_key, self.endpoint)
+            for wu in response['work_units']]
+
+  def get_work_unit(
+      self, xid: str, wid: int, verify_exists: bool = True) -> WorkUnit:
     'Returns the work unit corresponding to an xid / wid pair.'
 
-    # TODO: We should do a remote check here to make sure xid/wid is a valid
-    # and active experiment.
+    if not verify_exists:
+      return WorkUnit(xid, wid, self.api_key, self.endpoint)
+
+    payload = {
+      'api_key': self.api_key,
+      'xid': xid,
+      'wid': wid,
+    }
+    url = '{}/api/v0/verify_work_unit_exists'.format(self.endpoint)
+    response = requests.get(url, params=payload)
+    _raise_if_error(response)
+
+    if not response.json()['exists']:
+      raise WindmillClientError(
+          f'A work unit corresponding to {xid}/{wid} does not exist.')
+
     return WorkUnit(xid, wid, self.api_key, self.endpoint)
 
 
@@ -73,6 +100,19 @@ class WorkUnit(object):
     self.wid: int = wid
     self.api_key: str = api_key
     self.endpoint: str = endpoint
+
+  def get_parameters(self) -> Dict:
+    '''Gets the parameter dictionary for this work unit.'''
+
+    payload = {
+      'api_key': self.api_key,
+      'xid': self.xid,
+      'wid': self.wid,
+    }
+    url = '{}/api/v0/get_work_unit_parameters'.format(self.endpoint)
+    response = requests.get(url, params=payload)
+    _raise_if_error(response)
+    return response.json()
 
   def add_diary_entry(self, entry: str):
     request = {
@@ -93,13 +133,23 @@ class WorkUnit(object):
     url = '{}/api/v0/add_measurements'.format(self.endpoint)
     _raise_if_error(requests.post(url, json=request))
 
-  def complete_experiment(self):
+  def complete(self) -> None:
+    'Mark this work unit completed.'
+
     request = {
       'api_key': self.api_key,
       'xid': self.xid,
+      'wid': self.wid,
     }
     url = '{}/api/v0/complete_experiment'.format(self.endpoint)
     _raise_if_error(requests.post(url, json=request))
+
+  def complete_experiment(self) -> None:
+    'DEPRECATED: Use complete() instead. Mark this work unit completed.'
+
+    warnings.warn(
+        'complete_experiment() is deprecated. Use complete() instead.')
+    self.complete()
 
   def register_signal(self, signal: str) -> None:
     'Registers a new signal, i.e., adds the name with the signal inactive.'
